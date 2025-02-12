@@ -1,14 +1,15 @@
 ﻿using Achievements.Handlers;
 using CommandSystem;
 using CommandSystem.Commands.RemoteAdmin.ServerEvent;
-using Exiled.API.Extensions;
-using Exiled.API.Features;
-using Exiled.API.Features.Pickups;
-using Exiled.API.Interfaces;
-using Exiled.Events;
-using Exiled.Events.EventArgs.Player;
 using InventorySystem;
 using InventorySystem.Items.Pickups;
+using LabApi.Events.Arguments.PlayerEvents;
+using LabApi.Events.Handlers;
+using LabApi.Features;
+using LabApi.Features.Console;
+using LabApi.Features.Wrappers;
+using LabApi.Loader;
+using LabApi.Loader.Features.Plugins;
 using MEC;
 using Scp914;
 using Scp914.Processors;
@@ -20,6 +21,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
+using Logger = LabApi.Features.Console.Logger;
 
 namespace TestingPlugin
 {
@@ -49,18 +51,18 @@ namespace TestingPlugin
             }
             else
             {
-                var a = Player.Get(Plugin.M914ID);
+                var a = Player.Get(Plugin1.M914ID);
                 if (a != player)
                 {
                     if (a == null)
                     {
-                        Plugin.plugin.Spawn(player);
+                        Plugin1.Spawn(player);
                     }
                     else
                     {
                         a.ClearInventory();
                         a.Kill("管理员强制处死");
-                        Plugin.plugin.Spawn(player);
+                        Plugin1.Spawn(player);
                     }
                 }
                 else
@@ -75,11 +77,9 @@ namespace TestingPlugin
             //return true;
         }
     }
-    public class Config : IConfig
+    public class Config
     {
-        public bool IsEnabled { get; set; } = true;
-        public bool Debug { get; set; } = false;
-        [Description("冷却四件")]
+        [Description("冷却时间")]
         public int Luck { get; set; } = 60;
         [Description("刷新几率")]
         public int Luck1 { get; set; } = 40;
@@ -91,41 +91,43 @@ namespace TestingPlugin
         public List<ItemType> itemTypes { get; set; } = new List<ItemType>() { };
 
     }
-    public class Plugin : Plugin<Config>
+    public class Plugin1 : Plugin
     {
+        public override Version RequiredApiVersion => new Version(LabApiProperties.CompiledVersion);
+        public override string Description => "SCPM914角色"; 
         public override string Author => "YF-OFFICE";
         public override Version Version => new Version(1, 0, 0);
         public override string Name => "M-914";
-        public static Plugin plugin;
+        public static Config Config;
         public static int M914ID = -1;
-        public int cool = -1;
-        public bool Use = true;
+        public static int cool = -1;
+        public static bool Use = true;
         public CoroutineHandle handle { get; set; }
         public Scp914KnobSetting Scp914Mode { get; set; } = Scp914KnobSetting.OneToOne;
-        public override void OnEnabled()
+        public override void LoadConfigs()
         {
-            plugin = this;
-            Exiled.Events.Handlers.Server.WaitingForPlayers += this.RoundEnding;
-            Exiled.Events.Handlers.Server.RoundStarted += this.RoundStarted;
-            Exiled.Events.Handlers.Player.DroppingItem += this.Pick;
-            Exiled.Events.Handlers.Player.DroppedItem += this.Pick1;
-            //Exiled.Events.Handlers.Player.Hurting += this.Hurt;
-            Exiled.Events.Handlers.Player.Died += this.Died;
-
-            Log.Info("加载插件中");
-            base.OnEnabled();
+            base.LoadConfigs();
+            Config = this.LoadConfig<Config>("M914.yml");
         }
-        public override void OnDisabled()
+        public override void Enable()
+        {
+            ServerEvents.WaitingForPlayers += this.RoundEnding;
+            ServerEvents.RoundStarted += this.RoundStarted;
+            PlayerEvents.DroppingItem += this.Pick;
+            PlayerEvents.DroppedItem += this.Pick1;
+            //PlayerEvents.Hurting += this.Hurt;
+            PlayerEvents.Death += this.Died;
+            Logger.Info("加载插件成功Binggo");
+        }
+        public override void Disable()
         {
 
-            Exiled.Events.Handlers.Server.WaitingForPlayers -= this.RoundEnding;
-            Exiled.Events.Handlers.Server.RoundStarted -= this.RoundStarted;
-            //Exiled.Events.Handlers.Player.InteractingDoor -= this.Indoor;
-            //Exiled.Events.Handlers.Player.Hurting -= this.Hurt;
-            Exiled.Events.Handlers.Player.Died -= this.Died;
-            plugin = null;
-            Log.Info("插件关闭了");
-            base.OnDisabled();
+            ServerEvents.WaitingForPlayers -= this.RoundEnding;
+            ServerEvents.RoundStarted -= this.RoundStarted;
+            //PlayerEvents.InteractingDoor -= this.Indoor;
+            //PlayerEvents.Hurting -= this.Hurt;
+            PlayerEvents.Death -= this.Died;
+            Logger.Info("插件关闭了");
         }
         public static List<Scp914KnobSetting> scp914KnobSettings = new List<Scp914KnobSetting>() { Scp914KnobSetting.Rough, Scp914KnobSetting.Coarse, Scp914KnobSetting.OneToOne, Scp914KnobSetting.Fine, Scp914KnobSetting.VeryFine };
         public static string GetChine(Scp914KnobSetting scp)
@@ -154,50 +156,55 @@ namespace TestingPlugin
             }
             return test;
         }
-        public void Spawn(Player player)
+        public static void Spawn(Player player)
         {
             if (player.IsAlive)
             {
-                M914ID = player.Id;
+                M914ID = player.PlayerId;
                 Use = true;
                 cool = Config.Luck;
                 player.MaxHealth = Config.Health;
                 player.Health = player.MaxHealth;
                 player.CustomInfo = "M-914";
                 player.ClearInventory();
-                player.AddItem(Config.itemTypes);
+                if (!Config.itemTypes.IsEmpty())
+                { Config.itemTypes.ForEach(x => { player.AddItem(x); });
+                }
                 player.AddItem(ItemType.Flashlight);
                 player.ClearBroadcasts();
                 //player.Broadcast(8, $"你是M-914 你的技能是: 丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工 祝你玩得愉快");
-                player.ShowHint("<align=center><color=red><size=100>SCP-M914</size></color>\n\n\n\n\n<size=35><color=#00FF00>你可以丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工</color></size></align>\n\n\n", 15f);
+                player.SendHint("<align=center><color=red><size=100>SCP-M914</size></color>\n\n\n\n\n<size=35><color=#00FF00>你可以丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工</color></size></align>\n\n\n", 15f);
             }
             else
             {
-                player.Role.Set(PlayerRoles.RoleTypeId.ClassD);
-                M914ID = player.Id;
+                player.SetRole(PlayerRoles.RoleTypeId.ClassD);
+                M914ID = player.PlayerId;
                 Use = true;
                 cool = Config.Luck;
                 player.MaxHealth = Config.Health;
                 player.Health = player.MaxHealth;
                 player.CustomInfo = "M-914";
                 player.ClearInventory();
-                player.AddItem(Config.itemTypes);
+                if (!Config.itemTypes.IsEmpty())
+                {
+                    Config.itemTypes.ForEach(x => { player.AddItem(x); });
+                }
                 player.AddItem(ItemType.Flashlight);
                 player.ClearBroadcasts();
                 //player.Broadcast(8, $"你是M-914 你的技能是: 丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工 祝你玩得愉快");
-                player.ShowHint("<align=center><color=red><size=100>SCP-M914</size></color>\n\n\n<size=35><color=#00FF00>你可以丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工</color></size></align>\n\n\n", 15f);
+                player.SendHint("<align=center><color=red><size=100>SCP-M914</size></color>\n\n\n<size=35><color=#00FF00>你可以丢下手电筒开启随机加工模式技能(20s)(60sCD) 捡起的物品将被随机模式加工</color></size></align>\n\n\n", 15f);
             }
         }
         public void RoundStarted()
         {
-            if (Player.List.Count() >= this.Config.People)
+            if (Player.List.Count() >= Config.People)
             {
                 int o = new System.Random().Next(0, 100);
                 if (o <= Config.Luck1)
                 {
                     Timing.CallDelayed(3f, () =>
                     {
-                        var player = Player.Get(PlayerRoles.RoleTypeId.ClassD).GetRandomValue();
+                        var player = Player.List.Where(x => x.Role == PlayerRoles.RoleTypeId.ClassD).ToList().RandomItem();
                         Spawn(player);
 
                     });
@@ -234,9 +241,9 @@ namespace TestingPlugin
                 yield return Timing.WaitForSeconds(1);
             }
         }
-        public void Pick(DroppingItemEventArgs ev)
+        public void Pick(PlayerDroppingItemEventArgs ev)
         {
-            if (ev.Player.Id == M914ID)
+            if (ev.Player.PlayerId == M914ID)
             {
                 if (ev.Item.Type == ItemType.Flashlight)
                 {
@@ -245,8 +252,8 @@ namespace TestingPlugin
                     {
 
                         Scp914Mode = scp914KnobSettings.RandomItem();
-                        ev.Player.ShowHint($"你成功使用技能 加工模式为:{GetChine(Scp914Mode)} 20s内你可以扔下任何物品来进行加工", 3f);
-                        ev.Player.Broadcast(5, $"你成功使用技能 加工模式为:{GetChine(Scp914Mode)} 20s内你可以扔下任何物品来进行加工");
+                        ev.Player.SendHint($"你成功使用技能 加工模式为:{GetChine(Scp914Mode)} 20s内你可以扔下任何物品来进行加工", 3f);
+                        ev.Player.SendBroadcast($"你成功使用技能 加工模式为:{GetChine(Scp914Mode)} 20s内你可以扔下任何物品来进行加工",5);
                         ev.Player.CustomInfo = $"SCP-M914-{GetChine(Scp914Mode)}";
                         cool = Config.Luck;
                         Use = false;
@@ -254,34 +261,29 @@ namespace TestingPlugin
                     else
                     {
 
-                        ev.Player.ShowHint($"技能冷却中还有{cool}秒", 3f);
+                        ev.Player.SendHint($"技能冷却中还有{cool}秒", 3f);
                     }
                 }
             }
 
         }
-        public void Pick1(DroppedItemEventArgs ev)
+        public void Pick1(PlayerDroppedItemEventArgs ev)
         {
-            if (ev.Player.Id == M914ID)
+            if (ev.Player.PlayerId == M914ID)
             {
                 if (Use == false && cool >= Config.Luck - 20)
                 {
-                    //Scp914ItemProcessor a = new Scp914ItemProcessor()
-                    ev.Pickup.Type.GetItemBase().TryGetComponent<Scp914ItemProcessor>(out var component);
-                    component.OnPickupUpgraded(Scp914Mode, ev.Pickup.Base, ev.Pickup.Position);
-                    //ev.Pickup.Base.TryGetComponent<Scp914ItemProcessor>(out var ao);
-                    //ao.OnPickupUpgraded(Scp914Mode, ev.Pickup.Base, ev.Pickup.Position + Vector3.up);
-                    /*.ProcessPickup(ev.Pickup.Base,false,Vector3.up,Scp914Mode);*/
-                    ev.Player.ShowHint("d你的物品成功升级");
+                    ev.Pickup.Base.TryGetComponent<Scp914ItemProcessor>(out var component);
+                    component.UpgradePickup(Scp914Mode, ev.Pickup.Base);
+                    ev.Player.SendHint("d你的物品成功升级");
                 }
             }
 
         }
-        public void Died(DiedEventArgs ev)
+        public void Died(PlayerDeathEventArgs ev)
         {
-            if (ev.Player.Id == M914ID)
+            if (ev.Player.PlayerId == M914ID)
             {
-                Map.Broadcast(7, $"[设施消息]\nM-914已被重新收容");
                 M914ID = -1;
                 Use = true;
                 cool = Config.Luck;
@@ -294,7 +296,7 @@ namespace TestingPlugin
             M914ID = -1;
             Use = true;
             cool = Config.Luck;
-            Log.Info("M914数据已重置");
+            Logger.Info("M914数据已重置");
             if (!handle.IsRunning)
             {
                 handle = Timing.RunCoroutine(Coll());
